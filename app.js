@@ -55,7 +55,7 @@ const mkEx = (name, label, lift, scale, tpl, bw = false) =>
 
 function defaults() {
   return {
-    v: 2,
+    v: 3,
     startDate: iso(mondayOf(new Date())),
     days: [1, 3, 5],            // Tue, Thu, Sat
     unit: 'kg',
@@ -64,12 +64,12 @@ function defaults() {
     tms: { Bench: 125, OHP: 75, Squat: 50, Deadlift: 40 },
     applied: [],
     phases: [
-      { id: uid(), name: 'Weights', weeks: 2, progress: true, slots: [
+      { id: uid(), name: 'Strength', weeks: 2, progress: true, slots: [
         [mkEx('Bench Press', 'Heavy', 'Bench', 100, 'Heavy 8-set (1+ top set)'), mkEx('Shoulder Press', 'Heavy', 'OHP', 100, '7-set')],
         [mkEx('Shoulder Press', 'PR', 'OHP', 100, 'Heavy 8-set (1+ top set)'), mkEx('Incline Bench Press', '', 'Bench', 75, 'Volume 8-set (last set +)')],
         [mkEx('Bench Press', 'PR', 'Bench', 100, 'Heavy 8-set (1+ top set)'), mkEx('Close Grip Barbell Triceps', '', 'Bench', 80, '7-set')],
       ]},
-      { id: uid(), name: 'Bodyweight', weeks: 2, progress: false, slots: [
+      { id: uid(), name: 'Agility', weeks: 2, progress: false, slots: [
         [mkEx('Push-ups', '', '', 100, '5 × 10 (last set max)', true), mkEx('Pike Push-ups', '', '', 100, '4 × max', true)],
         [mkEx('Dumbbell Squats', '', 'Squat', 100, 'Light 4 × 10'), mkEx('Bench Dips', '', '', 100, '4 × max', true)],
         [mkEx('Dumbbell Deadlift', '', 'Deadlift', 100, 'Light 4 × 10'), mkEx('Diamond Push-ups', '', '', 100, '4 × max', true)],
@@ -87,6 +87,13 @@ function load() {
     const o = S; S = defaults();
     S.logs = o.logs || {}; S.days = o.days || S.days; S.startDate = o.startDate || S.startDate;
     S.unit = o.unit || 'kg'; S.round = o.round || 2.5;
+  }
+  if (S.v < 3) {   // v3 renamed the default phases
+    for (const p of S.phases || []) {
+      if (p.name === 'Weights') p.name = 'Strength';
+      if (p.name === 'Bodyweight') p.name = 'Agility';
+    }
+    S.v = 3;
   }
   normalize();
 }
@@ -341,6 +348,24 @@ function viewProgramme() {
     h('label', { class: 'row small', style: 'margin-bottom:8px' },
       h('input', { type: 'checkbox', checked: p.progress !== false, onchange: e => { p.progress = e.target.checked; save(); } }),
       'Raise training maxes after each week of this phase'),
+    h('div', { class: 'row wrap', style: 'margin-bottom:8px' },
+      h('button', { class: 'ghost', disabled: pTab === 0, onclick: () => {
+        [S.phases[pTab - 1], S.phases[pTab]] = [S.phases[pTab], S.phases[pTab - 1]];
+        pTab--; save(); rerender();
+      } }, '◀ Earlier in cycle'),
+      h('button', { class: 'ghost', disabled: pTab === S.phases.length - 1, onclick: () => {
+        [S.phases[pTab + 1], S.phases[pTab]] = [S.phases[pTab], S.phases[pTab + 1]];
+        pTab++; save(); rerender();
+      } }, 'Later in cycle ▶'),
+      h('span', { class: 'grow' }),
+      h('button', { class: 'ghost', onclick: () => {
+        if (!confirm(`Restart the cycle so "${p.name}" becomes week 1, starting this week? Your logs are kept.`)) return;
+        S.phases = S.phases.slice(pTab).concat(S.phases.slice(0, pTab));
+        pTab = 0;
+        S.startDate = iso(mondayOf(new Date()));
+        S.applied = [];
+        save(); rerender();
+      } }, 'Start cycle at this phase')),
     S.phases.length > 1 && h('button', { class: 'danger', onclick: () => {
       if (confirm(`Delete phase "${p.name}"?`)) { S.phases.splice(pTab, 1); pTab = 0; save(); rerender(); }
     } }, 'Delete phase')));
@@ -437,7 +462,7 @@ function tmCard() {
   const nm = h('input', { placeholder: 'New lift (e.g. Row)' });
   card.append(h('div', { class: 'row', style: 'margin-top:8px' }, nm,
     h('button', { onclick: () => { const n = nm.value.trim(); if (n && !(n in S.tms)) { S.tms[n] = 0; save(); rerender(); } } }, 'Add')),
-    h('p', { class: 'mute small', style: 'margin-bottom:0' }, 'Set weights are a % of these. After each weights week you get a prompt on the Calendar to raise them (bodyweight weeks are skipped).'));
+    h('p', { class: 'mute small', style: 'margin-bottom:0' }, 'Set weights are a % of these. After each week of a phase with progress enabled you get a prompt on the Calendar to raise them.'));
   return card;
 }
 // Earliest finished, progress-enabled week with logged lifts whose maxes haven't been reviewed yet.
@@ -626,11 +651,18 @@ function viewSettings() {
     h('p', { class: 'mute small' }, 'Pick 1–7 days. The first selected day each week is Day 1, the next is Day 2, and so on.'),
     chips));
 
+  const tp = planFor(new Date());
   root.append(h('div', { class: 'card' },
     h('h3', { style: 'margin-bottom:8px' }, 'Cycle'),
     h('div', { class: 'lbl' }, 'Week 1 starts (any date; snaps to that Monday)'),
     h('input', { type: 'date', value: S.startDate, onchange: e => { if (e.target.value) { S.startDate = e.target.value; normalize(); save(); rerender(); } } }),
-    h('p', { class: 'mute small' }, 'Phase lengths and order are set in Programme.')));
+    h('div', { class: 'row', style: 'margin:10px 0' },
+      h('button', { class: 'ghost', onclick: () => { S.startDate = iso(addDays(parse(S.startDate), -7)); save(); rerender(); } }, '◀ 1 wk'),
+      h('span', { class: 'grow small', style: 'text-align:center' },
+        h('b', null, `Today = ${tp.phase.name} · week ${tp.wk}/${tp.phase.weeks}`),
+        h('div', { class: 'mute' }, '(of the current cycle)')),
+      h('button', { class: 'ghost', onclick: () => { S.startDate = iso(addDays(parse(S.startDate), 7)); save(); rerender(); } }, '1 wk ▶')),
+    h('p', { class: 'mute small' }, 'Phase lengths and order are set in Programme — including "Start cycle at this phase" to make any phase week 1.')));
 
   root.append(h('div', { class: 'card' },
     h('div', { class: 'fields', style: 'grid-template-columns:1fr 1fr' },
