@@ -3,7 +3,7 @@
 const KEY = 'badani.journal.v1';
 const DAYN = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const PCOL = ['--p0','--p3','--p1','--p2','--p4'];   // fallback palette for unnamed phases
-const PHCOL = { Strength: '--p0', Agility: '--p3' }; // named phases keep their color in any order: Strength orange, Agility teal
+const PHCOL = { Strength: '--p0', Agility: '--p3', 'Daily Qigong': '--p2' }; // named phases keep their color in any order: Strength orange, Agility teal, Qigong purple
 const colOf = (p, i) => `var(${PHCOL[p.name] || PCOL[i % PCOL.length]})`;
 
 /* ---------- helpers ---------- */
@@ -52,6 +52,8 @@ const TPL_BW = {
   '5 × 10 (last set max)': [[100,10],[100,10],[100,10],[100,10],[100,10,1]],
   '4 × max': [[100,10,1],[100,10,1],[100,10,1],[100,10,1]],
   '3 × 15': [[100,15],[100,15],[100,15]],
+  'Flow (minutes)': [[100,10]],   // qigong flows: reps field counts minutes
+  'Hold (minutes)': [[100,2]],
 };
 const mkSets = a => a.map(([pct, reps, am]) => ({ pct, reps, amrap: !!am }));
 // lift = key into S.tms ('' = custom fixed weight in ex.base); scale = % of that training max this exercise works from
@@ -67,24 +69,44 @@ function agilitySlots() {
     [mkEx('Pull-ups', '', '', 100, '4 × max', true), mkDB('Dumbbell Deadlift', '5kg ×2'), mkEx('Diamond Push-ups', '', '', 100, '4 × max', true)],
   ];
 }
+// Daily qigong routine — one independent copy per weekday so edits stay per-day
+function qigongSlots() {
+  const mkFlow = () => {
+    const flow = [
+      mkEx('Ba Duan Jin (8 Pieces of Brocade)', '', '', 100, 'Flow (minutes)', true),
+      mkEx('Standing Meditation (Wuji)', '', '', 100, 'Flow (minutes)', true),
+      mkEx('Horse Stance Hold', '', '', 100, 'Hold (minutes)', true),
+      mkEx('Spinal Waves (mobility)', '', '', 100, 'Flow (minutes)', true),
+    ];
+    flow.forEach(e => { e.unit = 'min'; });
+    flow[1].sets[0].reps = 5;   // standing meditation
+    flow[3].sets[0].reps = 5;   // spinal waves
+    return flow;
+  };
+  return [0, 1, 2, 3, 4, 5, 6].map(() => mkFlow());
+}
 
 function defaults() {
   return {
-    v: 7,
+    v: 8,
     startDate: iso(sowOf(new Date())),
     weekStart: 0,               // calendar weeks run Mon–Sun
-    days: [1, 3, 5],            // Tue, Thu, Sat
     unit: 'kg',
     round: 2.5,
     restSec: 180, warnSec: 120,
     tms: { Bench: 125, OHP: 75, Squat: 50, Deadlift: 40 },
     applied: [],
-    phases: [
-      { id: uid(), name: 'Agility', weeks: 2, progress: false, slots: agilitySlots() },
-      { id: uid(), name: 'Strength', weeks: 2, progress: true, slots: [
-        [mkEx('Bench Press', 'Heavy', 'Bench', 100, 'Heavy 8-set (1+ top set)'), mkEx('Shoulder Press', 'Heavy', 'OHP', 100, '7-set')],
-        [mkEx('Shoulder Press', 'PR', 'OHP', 100, 'Heavy 8-set (1+ top set)'), mkEx('Incline Bench Press', '', 'Bench', 75, 'Volume 8-set (last set +)')],
-        [mkEx('Bench Press', 'PR', 'Bench', 100, 'Heavy 8-set (1+ top set)'), mkEx('Close Grip Barbell Triceps', '', 'Bench', 80, '7-set')],
+    programmes: [
+      { id: uid(), name: 'Strength + Agility', days: [1, 3, 5], phases: [
+        { id: uid(), name: 'Agility', weeks: 2, progress: false, slots: agilitySlots() },
+        { id: uid(), name: 'Strength', weeks: 2, progress: true, slots: [
+          [mkEx('Bench Press', 'Heavy', 'Bench', 100, 'Heavy 8-set (1+ top set)'), mkEx('Shoulder Press', 'Heavy', 'OHP', 100, '7-set')],
+          [mkEx('Shoulder Press', 'PR', 'OHP', 100, 'Heavy 8-set (1+ top set)'), mkEx('Incline Bench Press', '', 'Bench', 75, 'Volume 8-set (last set +)')],
+          [mkEx('Bench Press', 'PR', 'Bench', 100, 'Heavy 8-set (1+ top set)'), mkEx('Close Grip Barbell Triceps', '', 'Bench', 80, '7-set')],
+        ]},
+      ]},
+      { id: uid(), name: 'Qigong', days: [0, 1, 2, 3, 4, 5, 6], phases: [
+        { id: uid(), name: 'Daily Qigong', weeks: 1, progress: false, slots: qigongSlots() },
       ]},
     ],
     logs: {},
@@ -130,59 +152,78 @@ function load() {
     S.weekStart = 0;
     S.v = 7;
   }
+  if (S.v < 8) {   // v8: one programme becomes many — existing phases become a "Strength + Agility" programme, plus daily Qigong
+    const mainPhases = (S.phases && S.phases.length) ? S.phases : defaults().programmes[0].phases;
+    S.programmes = [
+      { id: uid(), name: 'Strength + Agility', days: (S.days && S.days.length) ? S.days : [1, 3, 5], phases: mainPhases },
+      { id: uid(), name: 'Qigong', days: [0, 1, 2, 3, 4, 5, 6], phases: [
+        { id: uid(), name: 'Daily Qigong', weeks: 1, progress: false, slots: qigongSlots() },
+      ]},
+    ];
+    delete S.days; delete S.phases;
+    S.v = 8;
+  }
   normalize();
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} }
 function normalize() {
   if (typeof S.weekStart !== 'number') S.weekStart = 0;
-  S.days = [...new Set(S.days)].sort((a, b) => a - b);
-  if (!S.days.length) S.days = [0];
+  if (!Array.isArray(S.programmes) || !S.programmes.length)
+    S.programmes = [{ id: uid(), name: 'Main', days: [0, 2, 4], phases: [{ id: uid(), name: 'Phase 1', weeks: 2, progress: false, slots: [[], [], []] }] }];
+  for (const g of S.programmes) {
+    g.days = [...new Set(g.days || [])].sort((a, b) => a - b);
+    if (!g.days.length) g.days = [0];
+    for (const p of g.phases || []) while (p.slots.length < g.days.length) p.slots.push([]);
+  }
   S.startDate = iso(sowOf(parse(S.startDate)));
-  for (const p of S.phases) while (p.slots.length < S.days.length) p.slots.push([]);
 }
 
 /* ---------- plan logic ---------- */
-const totalWeeks = () => S.phases.reduce((a, p) => a + p.weeks, 0) || 1;
 const weekIdx = d => Math.round((sowOf(d) - parse(S.startDate)) / (7 * 864e5));
-function phaseFor(wi) {
-  const tot = totalWeeks();
+function phaseFor(phases, wi) {
+  if (!phases.length) return { phase: { name: '—', weeks: 1, progress: false, slots: [] }, i: 0, wk: 1 };
+  const tot = phases.reduce((a, p) => a + p.weeks, 0) || 1;
   let w = ((wi % tot) + tot) % tot;
-  for (let i = 0; i < S.phases.length; i++) {
-    const p = S.phases[i];
+  for (let i = 0; i < phases.length; i++) {
+    const p = phases[i];
     if (w < p.weeks) return { phase: p, i, wk: w + 1 };
     w -= p.weeks;
   }
-  return { phase: S.phases[0], i: 0, wk: 1 };
+  return { phase: phases[0], i: 0, wk: 1 };
 }
-const slotFor = d => S.days.indexOf(dowOf(d));
 function weightFor(ex, set) {
   if (ex.bw) return 0;
   const tm = ex.lift ? (S.tms[ex.lift] || 0) : (ex.base || 0);
   return fmt(Math.round((tm * (ex.scale ?? 100) / 100 * set.pct / 100) / S.round) * S.round);
 }
 function exName(e) { return e.label ? `${e.name} (${e.label})` : e.name; }
-function planFor(d) {
-  const { phase, i, wk } = phaseFor(weekIdx(d));
-  const slot = slotFor(d);
-  return { phase, pi: i, wk, slot, exs: slot >= 0 ? (phase.slots[slot] || []) : [] };
+// every programme that trains on d's weekday, with its current phase + slot
+function plansFor(d) {
+  const wi = weekIdx(d), dow = dowOf(d), out = [];
+  for (const prog of S.programmes) {
+    const slot = prog.days.indexOf(dow);
+    if (slot < 0) continue;
+    const { phase, i, wk } = phaseFor(prog.phases, wi);
+    out.push({ prog, phase, pi: i, wk, slot, exs: phase.slots[slot] || [] });
+  }
+  return out;
 }
-function buildSession(d) {
-  const pl = planFor(d);
+function buildSession(d, plans) {
   return {
-    phase: pl.phase.name, slot: pl.slot, note: '', bodyweight: '',
-    exercises: pl.exs.map(ex => ({
-      name: ex.name, label: ex.label || '', bw: ex.bw, lift: ex.lift || '',
+    slot: plans.length ? plans[0].slot : -1, note: '', bodyweight: '',
+    exercises: plans.flatMap(pl => pl.exs.map(ex => ({
+      name: ex.name, label: ex.label || '', bw: ex.bw, lift: ex.lift || '', pg: pl.prog.name, unit: ex.unit || '',
       sets: ex.sets.map(s => {
         const w = weightFor(ex, s);
         return { tw: w, tr: s.reps, amrap: !!s.amrap, w, r: '', done: false };
       }),
-    })),
+    }))),
   };
 }
 const hasDone = log => log && log.exercises.some(e => e.sets.some(s => s.done));
 
 /* ---------- routing ---------- */
-let calOff = 0, pTab = 0, statEx = null;
+let calOff = 0, pTab = 0, phTab = 0, statEx = null;
 function route() { return (location.hash.replace(/^#\/?/, '') || '').split('/'); }
 function render() {
   const r = route(), app = $('#app');
@@ -203,24 +244,28 @@ window.addEventListener('hashchange', render);
 function viewCalendar() {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const root = h('div');
-  const tp = planFor(today);
+  const tplans = plansFor(today);
   const tlog = S.logs[iso(today)];
   root.append(h('h1', null, 'Badani Journal'));
 
   const tcard = h('div', { class: 'card' });
-  const tvids = dayVideos(tp.exs);   // [{name, provider, src}]
-  if (tp.slot >= 0 || tlog) {
+  const tvids = dayVideos(tplans.flatMap(p => p.exs));   // [{name, provider, src}]
+  if (tplans.length || tlog) {
+    for (const pl of tplans) {
+      tcard.append(
+        h('div', { class: 'mute small' }, `${pl.prog.name} · ${pl.phase.name} week ${pl.wk}/${pl.phase.weeks}`),
+        h('h3', null, `Day ${pl.slot + 1}`),
+        h('div', { class: 'mute', style: 'margin:4px 0 6px' }, pl.exs.map(exName).join(' · ') || 'Nothing planned'));
+    }
     tcard.append(
-      h('div', { class: 'mute small' }, `Today · ${tp.phase.name} week ${tp.wk}/${tp.phase.weeks}`),
-      h('h3', null, tp.slot >= 0 ? `Day ${tp.slot + 1}` : 'Extra session'),
       h('div', { class: 'row', style: 'margin:4px 0 10px' },
-        h('span', { class: 'mute grow' }, tp.exs.map(exName).join(' · ') || 'Nothing planned'),
         tvids.length > 0 && h('button', { class: 'ghost', style: 'padding:2px 10px', onclick: () => toggleVids(iso(today), tvids) },
           vidFloat && vidFloat.key === iso(today) ? '✕ Close video' : '▶ Video')),
       h('button', { class: 'pri', onclick: () => location.hash = `#/day/${iso(today)}` },
         hasDone(tlog) ? 'Continue workout' : 'Start workout'));
   } else {
-    tcard.append(h('div', { class: 'mute small' }, `Today · ${tp.phase.name} week ${tp.wk}/${tp.phase.weeks}`),
+    const { phase, wk } = phaseFor(S.programmes[0].phases, weekIdx(today));
+    tcard.append(h('div', { class: 'mute small' }, `Today · ${phase.name} week ${wk}/${phase.weeks}`),
       h('h3', null, 'Rest day'), h('div', { class: 'mute' }, 'Tap any day below to log something extra.'));
   }
   const pend = pendingTM();
@@ -238,7 +283,7 @@ function viewCalendar() {
   for (let w = 0; w < 6; w++) {
     const ws = addDays(first, w * 7);
     const wi = weekIdx(ws);
-    const { phase, i, wk } = phaseFor(wi);
+    const { phase, i, wk } = phaseFor(S.programmes[0].phases, wi);   // week label follows the main programme
     const col = colOf(phase, i);
     const before = wi < 0;
     const week = h('div', { class: 'week', style: `--pc:${col}` },
@@ -248,15 +293,18 @@ function viewCalendar() {
     const grid = h('div', { class: 'days' });
     for (let d = 0; d < 7; d++) {   // column d = d days after the week's start; its weekday matches the header via colOrder
       const date = addDays(ws, d), key = iso(date);
-      const slot = slotFor(date), log = S.logs[key];
-      const planned = slot >= 0 && !before;
+      const log = S.logs[key];
+      const dayPlans = before ? [] : plansFor(date);
+      const pcol = dayPlans.length ? colOf(dayPlans[0].phase, dayPlans[0].pi) : col;
       grid.append(h('div', {
-        class: 'cell' + (planned ? ' plan' : '') + (key === iso(today) ? ' today' : '') + (before ? ' dim' : ''),
+        class: 'cell' + (dayPlans.length ? ' plan' : '') + (key === iso(today) ? ' today' : '') + (before ? ' dim' : ''),
+        style: `--pc:${pcol}`,
         onclick: () => location.hash = `#/day/${key}`,
       },
         h('span', { class: 'n' }, date.getDate()),
-        planned && h('span', { class: 'lab' }, `D${slot + 1}`),
-        !planned && log && h('span', { class: 'lab' }, 'Extra'),
+        dayPlans.map(pl => h('span', { class: 'lab' },
+          pl.prog === S.programmes[0] ? `D${pl.slot + 1}` : pl.prog.name.slice(0, 2))),
+        !dayPlans.length && log && h('span', { class: 'lab' }, 'Extra'),
         hasDone(log) && h('span', { class: 'ck' }, '✓')));
     }
     week.append(grid);
@@ -268,20 +316,21 @@ function viewCalendar() {
 /* ---------- day / session ---------- */
 function viewDay(key) {
   const date = parse(key);
-  const pl = planFor(date);
+  const plans = plansFor(date);
   let log = S.logs[key];
   let isDraft = false;
-  if (!log) { log = buildSession(date); isDraft = true; }
+  if (!log) { log = buildSession(date, plans); isDraft = true; }
   const commit = () => { if (isDraft) { S.logs[key] = log; isDraft = false; } save(); };
 
   const root = h('div');
   root.append(
     h('div', { class: 'row between' },
       h('button', { class: 'ghost', onclick: () => location.hash = '#/' }, '← Calendar'),
-      h('span', { class: 'tag' }, `${pl.phase.name} · wk ${pl.wk}/${pl.phase.weeks}`)),
+      h('span', { class: 'row wrap' }, plans.map(pl =>
+        h('span', { class: 'tag' }, `${pl.prog.name} · ${pl.phase.name} wk ${pl.wk}/${pl.phase.weeks}`)))),
     h('h1', null, longDate(date)),
     h('div', { class: 'mute', style: 'margin:-6px 0 12px' },
-      log.slot >= 0 ? `Day ${log.slot + 1}` : 'Extra session'));
+      plans.length ? plans.map(pl => `${pl.prog.name} day ${pl.slot + 1}`).join(' · ') : 'Extra session'));
 
   const body = h('div');
   root.append(body);
@@ -289,8 +338,15 @@ function viewDay(key) {
   function draw() {
     body.replaceChildren();
     if (!log.exercises.length)
-      body.append(h('div', { class: 'card mute' }, 'No exercises planned. Add one below, or plan this day in Programme.'));
-    log.exercises.forEach((ex, ei) => body.append(exCard(ex, ei)));
+      body.append(h('div', { class: 'card mute' }, 'No exercises planned. Add one below, or plan this day in Programmes.'));
+    let lastPg = null;
+    log.exercises.forEach((ex, ei) => {
+      if (ex.pg && ex.pg !== lastPg) {
+        lastPg = ex.pg;
+        body.append(h('div', { class: 'row', style: 'margin:14px 2px 6px' }, h('h3', null, ex.pg)));
+      }
+      body.append(exCard(ex, ei));
+    });
 
     const names = allNames();
     const dl = h('datalist', { id: 'names' }, names.map(n => h('option', { value: n })));
@@ -325,7 +381,8 @@ function viewDay(key) {
         if (confirm(`Remove ${exName(ex)} from this day?`)) { log.exercises.splice(ei, 1); commit(); draw(); }
       } }, '✕')));
     ex.sets.forEach((s, si) => {
-      const tgt = ex.bw ? `${s.tr}${s.amrap ? '+' : ''} reps` : `${fmt(s.tw)} × ${s.tr}${s.amrap ? '+' : ''}`;
+      const u = ex.unit || 'reps';
+      const tgt = ex.bw ? `${s.tr}${s.amrap ? '+' : ''} ${u}` : `${fmt(s.tw)} × ${s.tr}${s.amrap ? '+' : ''}`;
       const row = h('div', { class: 'srow' + (s.done ? ' done' : '') },
         h('span', { class: 'mute small' }, si + 1),
         h('span', { class: 'tg' + (s.amrap ? ' amrap' : '') }, tgt),
@@ -357,27 +414,57 @@ function viewDay(key) {
 }
 function allNames() {
   const set = new Set();
-  S.phases.forEach(p => p.slots.forEach(sl => sl.forEach(e => set.add(e.name))));
+  S.programmes.forEach(g => g.phases.forEach(p => p.slots.forEach(sl => sl.forEach(e => set.add(e.name)))));
   Object.values(S.logs).forEach(l => l.exercises.forEach(e => set.add(e.name)));
   return [...set].sort();
 }
 
-/* ---------- programme editor ---------- */
+/* ---------- programmes editor ---------- */
 function viewProgramme() {
   normalize();
-  if (pTab >= S.phases.length) pTab = 0;
-  const p = S.phases[pTab];
+  if (pTab >= S.programmes.length) pTab = 0;
+  const prog = S.programmes[pTab];
+  if (phTab >= prog.phases.length) phTab = 0;
+  const p = prog.phases[phTab];
   const root = h('div');
-  root.append(h('h1', null, 'Programme'),
+  root.append(h('h1', null, 'Programmes'),
     h('p', { class: 'mute small', style: 'margin-top:-6px' },
-      `Cycle: ${S.phases.map(x => `${x.name} ${x.weeks}w`).join(' → ')} → repeat. Schedule: ${S.days.map(d => DAYN[d]).join(', ')}.`));
+      'Each programme runs on its own days — they cycle together from the shared cycle start (Settings).'));
 
   root.append(tmCard());
+
   root.append(h('div', { class: 'tabs' },
-    S.phases.map((x, i) => h('button', { class: 'tab' + (i === pTab ? ' on' : ''), onclick: () => { pTab = i; rerender(); } }, x.name)),
+    S.programmes.map((x, i) => h('button', { class: 'tab' + (i === pTab ? ' on' : ''), onclick: () => { pTab = i; phTab = 0; rerender(); } }, x.name)),
     h('button', { class: 'tab', onclick: () => {
-      S.phases.push({ id: uid(), name: 'Phase ' + (S.phases.length + 1), weeks: 2, slots: S.days.map(() => []) });
-      pTab = S.phases.length - 1; normalize(); save(); rerender();
+      S.programmes.push({ id: uid(), name: 'Programme ' + (S.programmes.length + 1), days: [1, 3, 5], phases: [{ id: uid(), name: 'Phase 1', weeks: 2, progress: false, slots: [[], [], []] }] });
+      pTab = S.programmes.length - 1; phTab = 0; normalize(); save(); rerender();
+    } }, '+ Programme')));
+
+  const chips = h('div', { class: 'chips' });
+  DAYN.forEach((n, i) => chips.append(h('button', { class: 'chip' + (prog.days.includes(i) ? ' on' : ''), onclick: () => {
+    if (prog.days.includes(i)) { if (prog.days.length > 1) prog.days = prog.days.filter(d => d !== i); }
+    else prog.days.push(i);
+    normalize(); save(); rerender();
+  } }, n)));
+  root.append(h('div', { class: 'card' },
+    h('div', { class: 'fields' },
+      h('div', null, h('div', { class: 'lbl' }, 'Programme name'),
+        h('input', { value: prog.name, onchange: e => { prog.name = e.target.value || 'Programme'; save(); rerender(); } })),
+      h('div', null, h('div', { class: 'lbl' }, 'Workout days'),
+        chips)),
+    h('p', { class: 'mute small', style: 'margin-bottom:0' },
+      `Cycle: ${prog.phases.map(x => `${x.name} ${x.weeks}w`).join(' → ')} → repeat.`),
+    S.programmes.length > 1 && h('button', { class: 'danger', style: 'margin-top:8px', onclick: () => {
+      if (confirm(`Delete programme "${prog.name}"? Its planned workouts disappear; your logs are kept.`)) {
+        S.programmes.splice(pTab, 1); pTab = 0; phTab = 0; save(); rerender();
+      }
+    } }, 'Delete programme')));
+
+  root.append(h('div', { class: 'tabs' },
+    prog.phases.map((x, i) => h('button', { class: 'tab' + (i === phTab ? ' on' : ''), onclick: () => { phTab = i; rerender(); } }, x.name)),
+    h('button', { class: 'tab', onclick: () => {
+      prog.phases.push({ id: uid(), name: 'Phase ' + (prog.phases.length + 1), weeks: 2, progress: false, slots: prog.days.map(() => []) });
+      phTab = prog.phases.length - 1; normalize(); save(); rerender();
     } }, '+ Phase')));
 
   root.append(h('div', { class: 'card' },
@@ -390,31 +477,31 @@ function viewProgramme() {
       h('input', { type: 'checkbox', checked: p.progress !== false, onchange: e => { p.progress = e.target.checked; save(); } }),
       'Raise training maxes after each week of this phase'),
     h('div', { class: 'row wrap', style: 'margin-bottom:8px' },
-      h('button', { class: 'ghost', disabled: pTab === 0, onclick: () => {
-        [S.phases[pTab - 1], S.phases[pTab]] = [S.phases[pTab], S.phases[pTab - 1]];
-        pTab--; save(); rerender();
+      h('button', { class: 'ghost', disabled: phTab === 0, onclick: () => {
+        [prog.phases[phTab - 1], prog.phases[phTab]] = [prog.phases[phTab], prog.phases[phTab - 1]];
+        phTab--; save(); rerender();
       } }, '◀ Earlier in cycle'),
-      h('button', { class: 'ghost', disabled: pTab === S.phases.length - 1, onclick: () => {
-        [S.phases[pTab + 1], S.phases[pTab]] = [S.phases[pTab], S.phases[pTab + 1]];
-        pTab++; save(); rerender();
+      h('button', { class: 'ghost', disabled: phTab === prog.phases.length - 1, onclick: () => {
+        [prog.phases[phTab + 1], prog.phases[phTab]] = [prog.phases[phTab], prog.phases[phTab + 1]];
+        phTab++; save(); rerender();
       } }, 'Later in cycle ▶'),
       h('span', { class: 'grow' }),
       h('button', { class: 'ghost', onclick: () => {
-        if (!confirm(`Restart the cycle so "${p.name}" becomes week 1, starting this week? Your logs are kept.`)) return;
-        S.phases = S.phases.slice(pTab).concat(S.phases.slice(0, pTab));
-        pTab = 0;
+        if (!confirm(`Restart the cycle so "${p.name}" becomes week 1 of ${prog.name}, starting this week? Other programmes shift too. Logs are kept.`)) return;
+        prog.phases = prog.phases.slice(phTab).concat(prog.phases.slice(0, phTab));
+        phTab = 0;
         S.startDate = iso(sowOf(new Date()));
         S.applied = [];
         save(); rerender();
       } }, 'Start cycle at this phase')),
-    S.phases.length > 1 && h('button', { class: 'danger', onclick: () => {
-      if (confirm(`Delete phase "${p.name}"?`)) { S.phases.splice(pTab, 1); pTab = 0; save(); rerender(); }
+    prog.phases.length > 1 && h('button', { class: 'danger', onclick: () => {
+      if (confirm(`Delete phase "${p.name}"?`)) { prog.phases.splice(phTab, 1); phTab = 0; save(); rerender(); }
     } }, 'Delete phase')));
 
   const dl = h('datalist', { id: 'names' }, allNames().map(n => h('option', { value: n })));
   root.append(dl);
 
-  S.days.forEach((dow, si) => {
+  prog.days.forEach((dow, si) => {
     const list = p.slots[si];
     const sec = h('div', { class: 'card' });
     sec.append(h('div', { class: 'row between' }, h('h3', null, `Day ${si + 1} · ${DAYN[dow]}`),
@@ -504,7 +591,7 @@ function tmCard() {
     h('button', { class: 'ghost danger', title: 'Remove', onclick: () => {
       if (!confirm(`Remove ${k}? Exercises using it switch to a custom weight.`)) return;
       delete S.tms[k];
-      S.phases.forEach(p => p.slots.forEach(sl => sl.forEach(e => { if (e.lift === k) { e.base = 0; e.lift = ''; } })));
+      S.programmes.forEach(g => g.phases.forEach(p => p.slots.forEach(sl => sl.forEach(e => { if (e.lift === k) { e.base = 0; e.lift = ''; } }))));
       save(); rerender();
     } }, '✕'))));
   const nm = h('input', { placeholder: 'New lift (e.g. Row)' });
@@ -519,7 +606,8 @@ function pendingTM() {
   const weeks = {};
   for (const [key, log] of Object.entries(S.logs)) {
     const wi = weekIdx(parse(key));
-    if (wi < 0 || wi >= cur || S.applied.includes(wi) || phaseFor(wi).phase.progress === false) continue;
+    const progressing = S.programmes.some(g => phaseFor(g.phases, wi).phase.progress !== false);
+    if (wi < 0 || wi >= cur || S.applied.includes(wi) || !progressing) continue;
     for (const ex of log.exercises) {
       if (!ex.lift || !(ex.lift in S.tms)) continue;
       for (const s of ex.sets) {
@@ -731,24 +819,14 @@ function chart(pts, labels) {
 function viewSettings() {
   const root = h('div', null, h('h1', null, 'Settings'));
 
-  const chips = h('div', { class: 'chips' });
-  DAYN.forEach((n, i) => chips.append(h('button', { class: 'chip' + (S.days.includes(i) ? ' on' : ''), onclick: () => {
-    if (S.days.includes(i)) { if (S.days.length > 1) S.days = S.days.filter(d => d !== i); }
-    else S.days.push(i);
-    normalize(); save(); rerender();
-  } }, n)));
-  root.append(h('div', { class: 'card' },
-    h('h3', null, 'Workout days'),
-    h('p', { class: 'mute small' }, 'Pick 1–7 days. The first selected day each week is Day 1, the next is Day 2, and so on.'),
-    chips));
-
-  const tp = planFor(new Date());
+  const tp = phaseFor(S.programmes[0].phases, weekIdx(new Date()));
   const wchips = h('div', { class: 'chips', style: 'margin-bottom:8px' });
   DAYN.forEach((n, i) => wchips.append(h('button', { class: 'chip' + (S.weekStart === i ? ' on' : ''), onclick: () => {
     S.weekStart = i; normalize(); save(); rerender();
   } }, n)));
   root.append(h('div', { class: 'card' },
     h('h3', { style: 'margin-bottom:8px' }, 'Cycle'),
+    h('p', { class: 'mute small' }, 'Shared by all programmes — each programme\u2019s phases cycle from this start. Workout days are set per programme in the Programmes tab.'),
     h('div', { class: 'lbl' }, 'Weeks start on'),
     wchips,
     h('div', { class: 'lbl' }, `Week 1 starts (any date; snaps to that ${DAYN[S.weekStart]})`),
@@ -759,7 +837,7 @@ function viewSettings() {
         h('b', null, `Today = ${tp.phase.name} · week ${tp.wk}/${tp.phase.weeks}`),
         h('div', { class: 'mute' }, '(of the current cycle)')),
       h('button', { class: 'ghost', onclick: () => { S.startDate = iso(addDays(parse(S.startDate), 7)); save(); rerender(); } }, '1 wk ▶')),
-    h('p', { class: 'mute small' }, 'Phase lengths and order are set in Programme — including "Start cycle at this phase" to make any phase week 1.')));
+    h('p', { class: 'mute small' }, 'Phase lengths and order are set in the Programmes tab — including "Start cycle at this phase" to make any phase week 1.')));
 
   root.append(h('div', { class: 'card' },
     h('div', { class: 'fields', style: 'grid-template-columns:1fr 1fr' },
@@ -781,7 +859,7 @@ function viewSettings() {
     f.text().then(t => {
       try {
         const d = JSON.parse(t);
-        if (!d.phases || !d.logs) throw 0;
+        if (!(d.programmes || d.phases) || !d.logs) throw 0;   // legacy backups (phases) migrate on reload
         if (!confirm('Replace everything with this backup?')) return;
         S = d; save(); location.reload();
       } catch { alert('That file is not a valid backup.'); }
