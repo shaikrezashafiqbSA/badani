@@ -2,7 +2,7 @@
 'use strict';
 const KEY = 'badani.journal.v1';
 const DAYN = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-const PCOL = ['--p0','--p1','--p2','--p3','--p4'];
+const PCOL = ['--p0','--p3','--p1','--p2','--p4'];   // phase 0 = orange (Strength), phase 1 = teal (Agility)
 
 /* ---------- helpers ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -29,7 +29,9 @@ const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())
 const parse = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
 const dowOf = d => (d.getDay() + 6) % 7;
-const mondayOf = d => addDays(new Date(d.getFullYear(), d.getMonth(), d.getDate()), -dowOf(d));
+// first day of the user's week (0 = Mon … 6 = Sun); guarded because defaults() runs before S exists
+const wstart = () => (typeof S !== 'undefined' && S && typeof S.weekStart === 'number') ? S.weekStart : 0;
+const sowOf = d => addDays(new Date(d.getFullYear(), d.getMonth(), d.getDate()), -((dowOf(d) - wstart() + 7) % 7));
 const fmt = n => (Number.isInteger(n) ? n : +(+n).toFixed(2));
 const uid = () => Math.random().toString(36).slice(2, 9);
 const shortDate = d => `${d.getDate()} ${d.toLocaleString('en', { month: 'short' })}`;
@@ -42,6 +44,7 @@ const TPL = {
   '7-set': [[70,5],[80,3],[90,1,1],[85,3],[80,4],[75,5],[70,6,1]],
   '5 × 5': [[80,5],[80,5],[80,5],[80,5],[80,5]],
   'Light 4 × 10': [[80,10],[80,10],[80,10],[80,10]],
+  '4 × 10': [[100,10],[100,10],[100,10],[100,10]],
 };
 const TPL_BW = {
   '5 × 10 (last set max)': [[100,10],[100,10],[100,10],[100,10],[100,10,1]],
@@ -51,12 +54,23 @@ const TPL_BW = {
 const mkSets = a => a.map(([pct, reps, am]) => ({ pct, reps, amrap: !!am }));
 // lift = key into S.tms ('' = custom fixed weight in ex.base); scale = % of that training max this exercise works from
 const mkEx = (name, label, lift, scale, tpl, bw = false) =>
-  ({ id: uid(), name, label, bw, lift, scale, base: 0, sets: mkSets((bw ? TPL_BW : TPL)[tpl]) });
+  ({ id: uid(), name, label, bw, lift, scale, base: 0, sets: mkSets((bw ? TPL_BW : TPL)[tpl]), video: '' });
+// fixed-weight dumbbell move (equipment: a pair of 5kg dumbbells)
+const mkDB = (name, label, tpl = '4 × 10') => { const e = mkEx(name, label, '', 100, tpl); e.base = 5; return e; };
+// Agility block: pull-up bar + bodyweight + 2 × 5kg dumbbells; focus = muscle, coordination, mobility
+function agilitySlots() {
+  return [
+    [mkEx('Pull-ups', '', '', 100, '4 × max', true), mkEx('Push-ups', '', '', 100, '5 × 10 (last set max)', true), mkDB('Lateral Raises', '5kg DB')],
+    [mkDB('Dumbbell Squats', '5kg ×2'), mkEx('Pike Push-ups', '', '', 100, '4 × max', true), mkEx('Bench Dips', '', '', 100, '4 × max', true)],
+    [mkEx('Pull-ups', '', '', 100, '4 × max', true), mkDB('Dumbbell Deadlift', '5kg ×2'), mkEx('Diamond Push-ups', '', '', 100, '4 × max', true)],
+  ];
+}
 
 function defaults() {
   return {
-    v: 3,
-    startDate: iso(mondayOf(new Date())),
+    v: 4,
+    startDate: iso(sowOf(new Date())),
+    weekStart: 1,               // weeks run Tue–Mon (workout days Tue, Thu, Sat)
     days: [1, 3, 5],            // Tue, Thu, Sat
     unit: 'kg',
     round: 2.5,
@@ -69,11 +83,7 @@ function defaults() {
         [mkEx('Shoulder Press', 'PR', 'OHP', 100, 'Heavy 8-set (1+ top set)'), mkEx('Incline Bench Press', '', 'Bench', 75, 'Volume 8-set (last set +)')],
         [mkEx('Bench Press', 'PR', 'Bench', 100, 'Heavy 8-set (1+ top set)'), mkEx('Close Grip Barbell Triceps', '', 'Bench', 80, '7-set')],
       ]},
-      { id: uid(), name: 'Agility', weeks: 2, progress: false, slots: [
-        [mkEx('Push-ups', '', '', 100, '5 × 10 (last set max)', true), mkEx('Pike Push-ups', '', '', 100, '4 × max', true)],
-        [mkEx('Dumbbell Squats', '', 'Squat', 100, 'Light 4 × 10'), mkEx('Bench Dips', '', '', 100, '4 × max', true)],
-        [mkEx('Dumbbell Deadlift', '', 'Deadlift', 100, 'Light 4 × 10'), mkEx('Diamond Push-ups', '', '', 100, '4 × max', true)],
-      ]},
+      { id: uid(), name: 'Agility', weeks: 2, progress: false, slots: agilitySlots() },
     ],
     logs: {},
   };
@@ -88,26 +98,34 @@ function load() {
     S.logs = o.logs || {}; S.days = o.days || S.days; S.startDate = o.startDate || S.startDate;
     S.unit = o.unit || 'kg'; S.round = o.round || 2.5;
   }
-  if (S.v < 3) {   // v3 renamed the default phases
+  if (S.v < 4) {   // v4: renamed phases, agility rebuilt for 5kg-DB + pull-up bar, weeks can start any day
+    S.weekStart = 1;             // this user's cycle starts Tuesday
     for (const p of S.phases || []) {
       if (p.name === 'Weights') p.name = 'Strength';
       if (p.name === 'Bodyweight') p.name = 'Agility';
+      if (p.name === 'Agility') p.slots = agilitySlots();
     }
-    S.v = 3;
+    // keep week 1 anchored where it was: move the start FORWARD to the first new week-day
+    // (a backward snap would shift the whole cycle one week earlier)
+    const d = parse(S.startDate);
+    while (dowOf(d) !== S.weekStart) d.setDate(d.getDate() + 1);
+    S.startDate = iso(d);
+    S.v = 4;
   }
   normalize();
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} }
 function normalize() {
+  if (typeof S.weekStart !== 'number') S.weekStart = 0;
   S.days = [...new Set(S.days)].sort((a, b) => a - b);
   if (!S.days.length) S.days = [0];
-  S.startDate = iso(mondayOf(parse(S.startDate)));
+  S.startDate = iso(sowOf(parse(S.startDate)));
   for (const p of S.phases) while (p.slots.length < S.days.length) p.slots.push([]);
 }
 
 /* ---------- plan logic ---------- */
 const totalWeeks = () => S.phases.reduce((a, p) => a + p.weeks, 0) || 1;
-const weekIdx = d => Math.round((mondayOf(d) - parse(S.startDate)) / (7 * 864e5));
+const weekIdx = d => Math.round((sowOf(d) - parse(S.startDate)) / (7 * 864e5));
 function phaseFor(wi) {
   const tot = totalWeeks();
   let w = ((wi % tot) + tot) % tot;
@@ -172,11 +190,15 @@ function viewCalendar() {
   root.append(h('h1', null, 'Badani Journal'));
 
   const tcard = h('div', { class: 'card' });
+  const tvids = dayVideos(tp.exs);   // [{name, provider, src}]
   if (tp.slot >= 0 || tlog) {
     tcard.append(
       h('div', { class: 'mute small' }, `Today · ${tp.phase.name} week ${tp.wk}/${tp.phase.weeks}`),
       h('h3', null, tp.slot >= 0 ? `Day ${tp.slot + 1}` : 'Extra session'),
-      h('div', { class: 'mute', style: 'margin:4px 0 10px' }, tp.exs.map(exName).join(' · ') || 'Nothing planned'),
+      h('div', { class: 'row', style: 'margin:4px 0 10px' },
+        h('span', { class: 'mute grow' }, tp.exs.map(exName).join(' · ') || 'Nothing planned'),
+        tvids.length > 0 && h('button', { class: 'ghost', style: 'padding:2px 10px', onclick: () => toggleVids(iso(today), tvids) },
+          vidFloat && vidFloat.key === iso(today) ? '✕ Close video' : '▶ Video')),
       h('button', { class: 'pri', onclick: () => location.hash = `#/day/${iso(today)}` },
         hasDone(tlog) ? 'Continue workout' : 'Start workout'));
   } else {
@@ -192,8 +214,9 @@ function viewCalendar() {
     h('button', { class: 'ghost', onclick: () => { calOff = 0; rerender(); } }, 'Today'),
     h('button', { onclick: () => { calOff += 4; rerender(); } }, 'Later ▶')));
 
-  const first = addDays(mondayOf(today), -7 + calOff * 7);
-  root.append(h('div', { class: 'dows', style: 'margin-bottom:4px' }, DAYN.map(n => h('div', null, n))));
+  const first = addDays(sowOf(today), -7 + calOff * 7);
+  const colOrder = [0, 1, 2, 3, 4, 5, 6].map(i => (S.weekStart + i) % 7);   // grid columns follow the user's week start
+  root.append(h('div', { class: 'dows', style: 'margin-bottom:4px' }, colOrder.map(i => h('div', null, DAYN[i]))));
   for (let w = 0; w < 6; w++) {
     const ws = addDays(first, w * 7);
     const wi = weekIdx(ws);
@@ -205,8 +228,8 @@ function viewCalendar() {
         h('b', { style: `color:${col}` }, before ? 'Before start' : `Week ${wi + 1} · ${phase.name} ${wk}/${phase.weeks}`),
         h('span', { class: 'mute' }, shortDate(ws))));
     const grid = h('div', { class: 'days' });
-    for (let d = 0; d < 7; d++) {
-      const date = addDays(ws, d), key = iso(date);
+    for (const ci of colOrder) {
+      const date = addDays(ws, ci), key = iso(date);
       const slot = slotFor(date), log = S.logs[key];
       const planned = slot >= 0 && !before;
       grid.append(h('div', {
@@ -362,7 +385,7 @@ function viewProgramme() {
         if (!confirm(`Restart the cycle so "${p.name}" becomes week 1, starting this week? Your logs are kept.`)) return;
         S.phases = S.phases.slice(pTab).concat(S.phases.slice(0, pTab));
         pTab = 0;
-        S.startDate = iso(mondayOf(new Date()));
+        S.startDate = iso(sowOf(new Date()));
         S.applied = [];
         save(); rerender();
       } }, 'Start cycle at this phase')),
@@ -416,6 +439,13 @@ function exEditor(list, ex, ei) {
         if (t) { ex.sets = mkSets(t); save(); rerender(); }
       } }, h('option', { value: '' }, 'Apply…'), Object.keys(ex.bw ? TPL_BW : TPL).map(k => h('option', { value: k }, k)))));
   card.append(baseRow);
+
+  const vemb = ex.video ? videoEmbed(ex.video) : null;
+  card.append(h('div', { class: 'row', style: 'margin-bottom:6px' },
+    h('div', { class: 'grow' },
+      h('div', { class: 'lbl' }, 'Video link (YouTube / TikTok / Instagram)'),
+      h('input', { value: ex.video || '', placeholder: 'Paste a link — it embeds in Calendar', onchange: e => { ex.video = e.target.value.trim(); save(); rerender(); } })),
+    ex.video && h('span', { class: 'tag', style: vemb ? '' : 'color:var(--bad)' }, vemb ? vemb.provider : 'unrecognized')));
 
   card.append(h('div', { class: 'setrow' + (ex.bw ? ' bw' : '') },
     h('span'), !ex.bw && h('span', { class: 'lbl' }, '% of max'), h('span', { class: 'lbl' }, 'Reps'),
@@ -554,6 +584,49 @@ function tick() {
 }
 setInterval(tick, 250);
 
+/* ---------- video links (YouTube / TikTok / Instagram embeds) ---------- */
+// Accept a pasted video URL and return an in-app embed source, or null if unrecognized.
+function videoEmbed(url) {
+  if (!url) return null;
+  url = String(url).trim();
+  let m;
+  if ((m = url.match(/(?:youtube\.com\/(?:watch\?[^#]*v=|shorts\/|embed\/|live\/)|youtu\.be\/)([\w-]{6,})/)))
+    return { provider: 'YouTube', src: `https://www.youtube-nocookie.com/embed/${m[1]}` };
+  if ((m = url.match(/tiktok\.com\/@[\w.-]+\/video\/(\d+)/)))
+    return { provider: 'TikTok', src: `https://www.tiktok.com/embed/${m[1]}` };
+  if ((m = url.match(/instagram\.com\/(?:p|reel|tv)\/([\w-]+)/)))
+    return { provider: 'Instagram', src: `https://www.instagram.com/p/${m[1]}/embed` };
+  return null;
+}
+const dayVideos = exs => exs.flatMap(ex => {
+  const v = videoEmbed(ex.video);
+  return v ? [{ name: exName(ex), ...v }] : [];
+});
+
+let vidFloat = null;   // { key, items, i }
+const vbar = h('div', { id: 'vidfloat', hidden: true });
+document.body.append(vbar);
+function toggleVids(key, items) {
+  if (vidFloat && vidFloat.key === key) vidFloat = null;   // play button doubles as close
+  else vidFloat = { key, items, i: 0 };
+  drawVid();
+  rerender();   // flip the calendar button label between ▶ Video and ✕ Close video
+}
+function drawVid() {
+  if (!vidFloat || !vidFloat.items.length) { vbar.hidden = true; vbar.replaceChildren(); return; }
+  const it = vidFloat.items[vidFloat.i], n = vidFloat.items.length;
+  vbar.hidden = false;
+  vbar.replaceChildren(
+    h('div', { class: 'tin' },
+      h('b', null, '▶'),
+      h('span', { class: 'grow' }, it.name, h('div', { class: 'mute' }, `${it.provider} · ${vidFloat.i + 1}/${n}`)),
+      n > 1 && h('button', { class: 'ghost', onclick: () => { vidFloat.i = (vidFloat.i + n - 1) % n; drawVid(); } }, '◀'),
+      n > 1 && h('button', { class: 'ghost', onclick: () => { vidFloat.i = (vidFloat.i + 1) % n; drawVid(); } }, '▶'),
+      h('button', { class: 'ghost', onclick: () => { vidFloat = null; drawVid(); rerender(); } }, '✕')),
+    h('div', { class: 'vwrap' },
+      h('iframe', { src: it.src, allow: 'autoplay; fullscreen; picture-in-picture', allowfullscreen: true })));
+}
+
 /* ---------- stats ---------- */
 function collect() {
   // name -> weekIdx -> weightKey -> {reps, sets}
@@ -652,9 +725,15 @@ function viewSettings() {
     chips));
 
   const tp = planFor(new Date());
+  const wchips = h('div', { class: 'chips', style: 'margin-bottom:8px' });
+  DAYN.forEach((n, i) => wchips.append(h('button', { class: 'chip' + (S.weekStart === i ? ' on' : ''), onclick: () => {
+    S.weekStart = i; normalize(); save(); rerender();
+  } }, n)));
   root.append(h('div', { class: 'card' },
     h('h3', { style: 'margin-bottom:8px' }, 'Cycle'),
-    h('div', { class: 'lbl' }, 'Week 1 starts (any date; snaps to that Monday)'),
+    h('div', { class: 'lbl' }, 'Weeks start on'),
+    wchips,
+    h('div', { class: 'lbl' }, `Week 1 starts (any date; snaps to that ${DAYN[S.weekStart]})`),
     h('input', { type: 'date', value: S.startDate, onchange: e => { if (e.target.value) { S.startDate = e.target.value; normalize(); save(); rerender(); } } }),
     h('div', { class: 'row', style: 'margin:10px 0' },
       h('button', { class: 'ghost', onclick: () => { S.startDate = iso(addDays(parse(S.startDate), -7)); save(); rerender(); } }, '◀ 1 wk'),
