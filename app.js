@@ -2,7 +2,9 @@
 'use strict';
 const KEY = 'badani.journal.v1';
 const DAYN = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-const PCOL = ['--p0','--p3','--p1','--p2','--p4'];   // phase 0 = orange (Strength), phase 1 = teal (Agility)
+const PCOL = ['--p0','--p3','--p1','--p2','--p4'];   // fallback palette for unnamed phases
+const PHCOL = { Strength: '--p0', Agility: '--p3' }; // named phases keep their color in any order: Strength orange, Agility teal
+const colOf = (p, i) => `var(${PHCOL[p.name] || PCOL[i % PCOL.length]})`;
 
 /* ---------- helpers ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -68,9 +70,9 @@ function agilitySlots() {
 
 function defaults() {
   return {
-    v: 4,
+    v: 7,
     startDate: iso(sowOf(new Date())),
-    weekStart: 1,               // weeks run Tue–Mon (workout days Tue, Thu, Sat)
+    weekStart: 0,               // calendar weeks run Mon–Sun
     days: [1, 3, 5],            // Tue, Thu, Sat
     unit: 'kg',
     round: 2.5,
@@ -78,12 +80,12 @@ function defaults() {
     tms: { Bench: 125, OHP: 75, Squat: 50, Deadlift: 40 },
     applied: [],
     phases: [
+      { id: uid(), name: 'Agility', weeks: 2, progress: false, slots: agilitySlots() },
       { id: uid(), name: 'Strength', weeks: 2, progress: true, slots: [
         [mkEx('Bench Press', 'Heavy', 'Bench', 100, 'Heavy 8-set (1+ top set)'), mkEx('Shoulder Press', 'Heavy', 'OHP', 100, '7-set')],
         [mkEx('Shoulder Press', 'PR', 'OHP', 100, 'Heavy 8-set (1+ top set)'), mkEx('Incline Bench Press', '', 'Bench', 75, 'Volume 8-set (last set +)')],
         [mkEx('Bench Press', 'PR', 'Bench', 100, 'Heavy 8-set (1+ top set)'), mkEx('Close Grip Barbell Triceps', '', 'Bench', 80, '7-set')],
       ]},
-      { id: uid(), name: 'Agility', weeks: 2, progress: false, slots: agilitySlots() },
     ],
     logs: {},
   };
@@ -111,6 +113,22 @@ function load() {
     while (dowOf(d) !== S.weekStart) d.setDate(d.getDate() + 1);
     S.startDate = iso(d);
     S.v = 4;
+  }
+  if (S.v < 5) {   // v5: workout days fixed to Tue/Thu/Sat, cycle restarts this week with Agility
+    S.days = [1, 3, 5];
+    const i = (S.phases || []).findIndex(p => p.name === 'Agility');
+    if (i > 0) S.phases = S.phases.slice(i).concat(S.phases.slice(0, i));
+    S.startDate = iso(sowOf(new Date()));   // week 1 = this week, whatever day today is
+    S.applied = [];
+    S.v = 5;
+  }
+  if (S.v < 6) {   // v6: workout days are Tue/Thu/Sat again
+    S.days = [1, 3, 5];
+    S.v = 6;
+  }
+  if (S.v < 7) {   // v7: calendar weeks start Monday (workouts remain Tue/Thu/Sat)
+    S.weekStart = 0;
+    S.v = 7;
   }
   normalize();
 }
@@ -221,15 +239,15 @@ function viewCalendar() {
     const ws = addDays(first, w * 7);
     const wi = weekIdx(ws);
     const { phase, i, wk } = phaseFor(wi);
-    const col = `var(${PCOL[i % PCOL.length]})`;
+    const col = colOf(phase, i);
     const before = wi < 0;
     const week = h('div', { class: 'week', style: `--pc:${col}` },
       h('div', { class: 'weekhead' },
         h('b', { style: `color:${col}` }, before ? 'Before start' : `Week ${wi + 1} · ${phase.name} ${wk}/${phase.weeks}`),
         h('span', { class: 'mute' }, shortDate(ws))));
     const grid = h('div', { class: 'days' });
-    for (const ci of colOrder) {
-      const date = addDays(ws, ci), key = iso(date);
+    for (let d = 0; d < 7; d++) {   // column d = d days after the week's start; its weekday matches the header via colOrder
+      const date = addDays(ws, d), key = iso(date);
       const slot = slotFor(date), log = S.logs[key];
       const planned = slot >= 0 && !before;
       grid.append(h('div', {
